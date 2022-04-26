@@ -22,7 +22,7 @@
 use crate::{
 	chain_extension::ChainExtension,
 	storage::meter::Diff,
-	wasm::{env_def::ImportSatisfyCheck, OwnerInfo, PrefabWasmModule},
+	wasm::{env_def::ImportSatisfyCheck, ModuleType, OwnerInfo, PrefabWasmModule},
 	AccountIdOf, Config, Schedule,
 };
 use codec::{Encode, MaxEncodedLen};
@@ -68,7 +68,7 @@ impl<'a, T: Config> ContractModule<'a, T> {
 	/// we reject such a module.
 	fn ensure_no_internal_memory(&self) -> Result<(), &'static str> {
 		if self.module.memory_section().map_or(false, |ms| ms.entries().len() > 0) {
-			return Err("module declares internal memory")
+			return Err("module declares internal memory");
 		}
 		Ok(())
 	}
@@ -79,13 +79,13 @@ impl<'a, T: Config> ContractModule<'a, T> {
 			// In Wasm MVP spec, there may be at most one table declared. Double check this
 			// explicitly just in case the Wasm version changes.
 			if table_section.entries().len() > 1 {
-				return Err("multiple tables declared")
+				return Err("multiple tables declared");
 			}
 			if let Some(table_type) = table_section.entries().first() {
 				// Check the table's initial size as there is no instruction or environment function
 				// capable of growing the table.
 				if table_type.limits().initial() > limit {
-					return Err("table exceeds maximum size allowed")
+					return Err("table exceeds maximum size allowed");
 				}
 			}
 		}
@@ -97,13 +97,13 @@ impl<'a, T: Config> ContractModule<'a, T> {
 		let code_section = if let Some(type_section) = self.module.code_section() {
 			type_section
 		} else {
-			return Ok(())
+			return Ok(());
 		};
 		for instr in code_section.bodies().iter().flat_map(|body| body.code().elements()) {
 			use self::elements::Instruction::BrTable;
 			if let BrTable(table) = instr {
 				if table.table.len() > limit as usize {
-					return Err("BrTable's immediate value is too big.")
+					return Err("BrTable's immediate value is too big.");
 				}
 			}
 		}
@@ -113,7 +113,7 @@ impl<'a, T: Config> ContractModule<'a, T> {
 	fn ensure_global_variable_limit(&self, limit: u32) -> Result<(), &'static str> {
 		if let Some(global_section) = self.module.global_section() {
 			if global_section.entries().len() > limit as usize {
-				return Err("module declares too many globals")
+				return Err("module declares too many globals");
 			}
 		}
 		Ok(())
@@ -124,8 +124,9 @@ impl<'a, T: Config> ContractModule<'a, T> {
 		if let Some(global_section) = self.module.global_section() {
 			for global in global_section.entries() {
 				match global.global_type().content_type() {
-					ValueType::F32 | ValueType::F64 =>
-						return Err("use of floating point type in globals is forbidden"),
+					ValueType::F32 | ValueType::F64 => {
+						return Err("use of floating point type in globals is forbidden")
+					},
 					_ => {},
 				}
 			}
@@ -135,8 +136,9 @@ impl<'a, T: Config> ContractModule<'a, T> {
 			for func_body in code_section.bodies() {
 				for local in func_body.locals() {
 					match local.value_type() {
-						ValueType::F32 | ValueType::F64 =>
-							return Err("use of floating point type in locals is forbidden"),
+						ValueType::F32 | ValueType::F64 => {
+							return Err("use of floating point type in locals is forbidden")
+						},
 						_ => {},
 					}
 				}
@@ -150,10 +152,11 @@ impl<'a, T: Config> ContractModule<'a, T> {
 						let return_type = func_type.results().get(0);
 						for value_type in func_type.params().iter().chain(return_type) {
 							match value_type {
-								ValueType::F32 | ValueType::F64 =>
+								ValueType::F32 | ValueType::F64 => {
 									return Err(
 										"use of floating point type in function types is forbidden",
-									),
+									)
+								},
 								_ => {},
 							}
 						}
@@ -170,12 +173,12 @@ impl<'a, T: Config> ContractModule<'a, T> {
 		let type_section = if let Some(type_section) = self.module.type_section() {
 			type_section
 		} else {
-			return Ok(())
+			return Ok(());
 		};
 
 		for Type::Function(func) in type_section.types() {
 			if func.params().len() > limit as usize {
-				return Err("Use of a function type with too many parameters.")
+				return Err("Use of a function type with too many parameters.");
 			}
 		}
 
@@ -207,10 +210,7 @@ impl<'a, T: Config> ContractModule<'a, T> {
 	/// - 'deploy'
 	///
 	/// Any other exports are not allowed.
-	fn scan_exports(&self) -> Result<(), &'static str> {
-		let mut deploy_found = false;
-		let mut call_found = false;
-
+	fn scan_exports(&self) -> Result<ModuleType, &'static str> {
 		let module = &self.module;
 
 		let types = module.type_section().map(|ts| ts.types()).unwrap_or(&[]);
@@ -231,54 +231,65 @@ impl<'a, T: Config> ContractModule<'a, T> {
 			})
 			.count();
 
-		for export in export_entries {
-			match export.field() {
-				"call" => call_found = true,
-				"deploy" => deploy_found = true,
-				_ => return Err("unknown export: expecting only deploy and call functions"),
-			}
-
-			// Then check the export kind. "call" and "deploy" are
-			// functions.
-			let fn_idx = match export.internal() {
-				Internal::Function(ref fn_idx) => *fn_idx,
-				_ => return Err("expected a function"),
+		let (module_type, required_exports): (ModuleType, Vec<(&str, fn(&[ValueType]) -> bool)>) =
+			if export_entries.iter().any(|export| export.field() == "interface_version_8") {
+				(
+					ModuleType::Cosmwasm,
+					vec![
+						("instantiate", |p| {
+							p == &vec![ValueType::I32, ValueType::I32, ValueType::I32]
+						}),
+						("query", |p| p == &vec![ValueType::I32, ValueType::I32]),
+						("allocate", |p| p == &vec![ValueType::I32]),
+						("deallocate", |p| p == &vec![ValueType::I32]),
+						("interface_version_8", |p| p.is_empty()),
+					],
+				)
+			} else {
+				(ModuleType::Ink, vec![("call", |p| p.is_empty()), ("deploy", |p| p.is_empty())])
 			};
 
-			// convert index from function index space to declared index space.
-			let fn_idx = match fn_idx.checked_sub(fn_space_offset as u32) {
-				Some(fn_idx) => fn_idx,
-				None => {
-					// Underflow here means fn_idx points to imported function which we don't allow!
-					return Err("entry point points to an imported function")
+		log::debug!("Contract type {:?}", module_type);
+
+		for (name, check_arguments) in required_exports {
+			match export_entries.iter().find(|e| e.field() == name) {
+				Some(export) => {
+					// Then check the export kind. "call" and "deploy" are
+					// functions.
+					let fn_idx = match export.internal() {
+						Internal::Function(ref fn_idx) => *fn_idx,
+						_ => return Err("expected a function"),
+					};
+
+					// convert index from function index space to declared index space.
+					let fn_idx = match fn_idx.checked_sub(fn_space_offset as u32) {
+						Some(fn_idx) => fn_idx,
+						None => {
+							// Underflow here means fn_idx points to imported function which we don't allow!
+							return Err("entry point points to an imported function");
+						},
+					};
+
+					let func_ty_idx = func_entries
+						.get(fn_idx as usize)
+						.ok_or_else(|| "export refers to non-existent function")?
+						.type_ref();
+					let Type::Function(ref func_ty) = types
+						.get(func_ty_idx as usize)
+						.ok_or_else(|| "function has a non-existent type")?;
+					if !check_arguments(func_ty.params())
+					{
+						return Err("entry point has wrong signature");
+					}
 				},
-			};
-
-			// Then check the signature.
-			// Both "call" and "deploy" has a () -> () function type.
-			// We still support () -> (i32) for backwards compatibility.
-			let func_ty_idx = func_entries
-				.get(fn_idx as usize)
-				.ok_or_else(|| "export refers to non-existent function")?
-				.type_ref();
-			let Type::Function(ref func_ty) = types
-				.get(func_ty_idx as usize)
-				.ok_or_else(|| "function has a non-existent type")?;
-			if !(func_ty.params().is_empty() &&
-				(func_ty.results().is_empty() || func_ty.results() == [ValueType::I32]))
-			{
-				return Err("entry point has wrong signature")
+				None => {
+					log::debug!("Missing mandatory export {}", name);
+					return Err("missing mandatory export")
+				},
 			}
 		}
 
-		if !deploy_found {
-			return Err("deploy function isn't exported")
-		}
-		if !call_found {
-			return Err("call function isn't exported")
-		}
-
-		Ok(())
+		Ok(module_type)
 	}
 
 	/// Scan an import section if any.
@@ -306,16 +317,16 @@ impl<'a, T: Config> ContractModule<'a, T> {
 				&External::Function(ref type_idx) => type_idx,
 				&External::Memory(ref memory_type) => {
 					if import.module() != IMPORT_MODULE_MEMORY {
-						return Err("Invalid module for imported memory")
+						return Err("Invalid module for imported memory");
 					}
 					if import.field() != "memory" {
-						return Err("Memory import must have the field name 'memory'")
+						return Err("Memory import must have the field name 'memory'");
 					}
 					if imported_mem_type.is_some() {
-						return Err("Multiple memory imports defined")
+						return Err("Multiple memory imports defined");
 					}
 					imported_mem_type = Some(memory_type);
-					continue
+					continue;
 				},
 			};
 
@@ -323,16 +334,16 @@ impl<'a, T: Config> ContractModule<'a, T> {
 				.get(*type_idx as usize)
 				.ok_or_else(|| "validation: import entry points to a non-existent type")?;
 
-			if !T::ChainExtension::enabled() &&
-				import.field().as_bytes() == b"seal_call_chain_extension"
+			if !T::ChainExtension::enabled()
+				&& import.field().as_bytes() == b"seal_call_chain_extension"
 			{
-				return Err("module uses chain extensions but chain extensions are disabled")
+				return Err("module uses chain extensions but chain extensions are disabled");
 			}
 
-			if import_fn_banlist.iter().any(|f| import.field().as_bytes() == *f) ||
-				!C::can_satisfy(import.module().as_bytes(), import.field().as_bytes(), func_ty)
+			if import_fn_banlist.iter().any(|f| import.field().as_bytes() == *f)
+				|| !C::can_satisfy(import.module().as_bytes(), import.field().as_bytes(), func_ty)
 			{
-				return Err("module imports a non-existent function")
+				return Err("module imports a non-existent function");
 			}
 		}
 		Ok(imported_mem_type)
@@ -351,18 +362,20 @@ fn get_memory_limits<T: Config>(
 		// Inspect the module to extract the initial and maximum page count.
 		let limits = memory_type.limits();
 		match (limits.initial(), limits.maximum()) {
-			(initial, Some(maximum)) if initial > maximum =>
+			(initial, Some(maximum)) if initial > maximum => {
 				return Err(
 					"Requested initial number of pages should not exceed the requested maximum",
-				),
-			(_, Some(maximum)) if maximum > schedule.limits.memory_pages =>
-				return Err("Maximum number of pages should not exceed the configured maximum."),
+				)
+			},
+			(_, Some(maximum)) if maximum > schedule.limits.memory_pages => {
+				return Err("Maximum number of pages should not exceed the configured maximum.")
+			},
 			(initial, Some(maximum)) => Ok((initial, maximum)),
 			(_, None) => {
 				// Maximum number of pages should be always declared.
 				// This isn't a hard requirement and can be treated as a maximum set
 				// to configured maximum.
-				return Err("Maximum number of pages should be always declared.")
+				return Err("Maximum number of pages should be always declared.");
 			},
 		}
 	} else {
@@ -375,10 +388,10 @@ fn get_memory_limits<T: Config>(
 fn check_and_instrument<C: ImportSatisfyCheck, T: Config>(
 	original_code: &[u8],
 	schedule: &Schedule<T>,
-) -> Result<(Vec<u8>, (u32, u32)), &'static str> {
+) -> Result<(ModuleType, Vec<u8>, (u32, u32)), &'static str> {
 	let result = (|| {
 		let contract_module = ContractModule::new(&original_code, schedule)?;
-		contract_module.scan_exports()?;
+		let module_type = contract_module.scan_exports()?;
 		contract_module.ensure_no_internal_memory()?;
 		contract_module.ensure_table_size_limit(schedule.limits.table_size)?;
 		contract_module.ensure_global_variable_limit(schedule.limits.globals)?;
@@ -396,7 +409,7 @@ fn check_and_instrument<C: ImportSatisfyCheck, T: Config>(
 			.inject_stack_height_metering()?
 			.into_wasm_code()?;
 
-		Ok((code, memory_limits))
+		Ok((module_type, code, memory_limits))
 	})();
 
 	if let Err(msg) = &result {
@@ -411,11 +424,12 @@ fn do_preparation<C: ImportSatisfyCheck, T: Config>(
 	schedule: &Schedule<T>,
 	owner: AccountIdOf<T>,
 ) -> Result<PrefabWasmModule<T>, &'static str> {
-	let (code, (initial, maximum)) =
+	let (module_type, code, (initial, maximum)) =
 		check_and_instrument::<C, T>(original_code.as_ref(), schedule)?;
 	let original_code_len = original_code.len();
 
 	let mut module = PrefabWasmModule {
+		module_type,
 		instruction_weights_version: schedule.instruction_weights.version,
 		initial,
 		maximum,
@@ -468,7 +482,7 @@ pub fn reinstrument_contract<T: Config>(
 	original_code: Vec<u8>,
 	schedule: &Schedule<T>,
 ) -> Result<Vec<u8>, &'static str> {
-	Ok(check_and_instrument::<super::runtime::Env, T>(&original_code, schedule)?.0)
+	Ok(check_and_instrument::<super::runtime::Env, T>(&original_code, schedule)?.1)
 }
 
 /// Alternate (possibly unsafe) preparation functions used only for benchmarking.
@@ -985,7 +999,7 @@ mod tests {
 				(func (export "call"))
 			)
 			"#,
-			Err("deploy function isn't exported")
+			Err("missing mandatory export")
 		);
 
 		prepare_test!(
@@ -995,7 +1009,7 @@ mod tests {
 				(func (export "deploy"))
 			)
 			"#,
-			Err("call function isn't exported")
+			Err("missing mandatory export")
 		);
 
 		// Try to use imported function as an entry point.
@@ -1036,17 +1050,17 @@ mod tests {
 			Err("entry point has wrong signature")
 		);
 
-		prepare_test!(
-			unknown_exports,
-			r#"
-			(module
-				(func (export "call"))
-				(func (export "deploy"))
-				(func (export "whatevs"))
-			)
-			"#,
-			Err("unknown export: expecting only deploy and call functions")
-		);
+		// prepare_test!(
+		// 	unknown_exports,
+		// 	r#"
+		// 	(module
+		// 		(func (export "call"))
+		// 		(func (export "deploy"))
+		// 		(func (export "whatevs"))
+		// 	)
+		// 	"#,
+		// 	Err("missing mandatory export")
+		// );
 
 		prepare_test!(
 			global_float,

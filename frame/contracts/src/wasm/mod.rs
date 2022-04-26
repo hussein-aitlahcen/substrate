@@ -38,8 +38,15 @@ use frame_support::dispatch::{DispatchError, DispatchResult};
 use sp_core::crypto::UncheckedFrom;
 use sp_sandbox::{SandboxEnvironmentBuilder, SandboxInstance, SandboxMemory};
 use sp_std::prelude::*;
+use sp_std::fmt::Debug;
 #[cfg(test)]
 pub use tests::MockExt;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Encode, Decode, scale_info::TypeInfo)]
+pub enum ModuleType {
+	Ink,
+	Cosmwasm
+}
 
 /// A prepared wasm module ready for execution.
 ///
@@ -53,6 +60,7 @@ pub use tests::MockExt;
 #[derive(Clone, Encode, Decode, scale_info::TypeInfo)]
 #[scale_info(skip_type_params(T))]
 pub struct PrefabWasmModule<T: Config> {
+	module_type: ModuleType,
 	/// Version of the instruction weights with which the code was instrumented.
 	#[codec(compact)]
 	instruction_weights_version: u32,
