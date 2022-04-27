@@ -2101,6 +2101,12 @@ define_env!(Env, <E: Ext>,
 			[env] db_remove(ctx, _key: u32) => {
 				Ok(())
 			},
+			[env] db_scan(ctx, _statr_ptr: u32, _end_ptr: u32, _order: i32) => {
+				Ok(())
+			},
+			[env] db_next(ctx, _iterator_id: u32) => {
+				Ok(())
+			},
 			[env] addr_validate(ctx, _key: u32, _value: u32) => {
 				Ok(())
 			},
