@@ -113,10 +113,13 @@ pub struct OwnerInfo<T: Config> {
 
 impl ExportedFunction {
 	/// The wasm export name for the function.
-	fn identifier(&self) -> &str {
-		match self {
-			Self::Constructor => "deploy",
-			Self::Call => "call",
+	fn identifier(&self, module_type: ModuleType) -> &str {
+		match (self, module_type) {
+			(Self::Constructor, ModuleType::Ink) => "deploy",
+			(Self::Call, ModuleType::Ink) => "call",
+
+			(Self::Constructor, ModuleType::Cosmwasm) => "instantiate",
+			(Self::Call, ModuleType::Cosmwasm) => "execute",
 		}
 	}
 }
@@ -272,8 +275,7 @@ where
 		let mut runtime = Runtime::new(module_type, ext, input_data, memory);
 		let result = sp_sandbox::default_executor::Instance::new(&code, &imports, &mut runtime)
 			.and_then(|mut instance| {
-				// very very ugly
-				instance.invoke(function.identifier(), &[], &mut runtime)
+				instance.invoke(function.identifier(module_type), &[], &mut runtime)
 			});
 
 		runtime.to_execution_result(result)
