@@ -249,7 +249,7 @@ impl<'a, T: Config> ContractModule<'a, T> {
 				(ModuleType::Ink, vec![("call", |p| p.is_empty()), ("deploy", |p| p.is_empty())])
 			};
 
-		log::debug!("Contract type {:?}", module_type);
+		log::debug!(target: "runtime::contracts", "Contract type {:?}", module_type);
 
 		for (name, check_arguments) in required_exports {
 			match export_entries.iter().find(|e| e.field() == name) {
@@ -283,7 +283,7 @@ impl<'a, T: Config> ContractModule<'a, T> {
 					}
 				},
 				None => {
-					log::debug!("Missing mandatory export {}", name);
+					log::debug!(target: "runtime::contracts", "Missing mandatory export {}", name);
 					return Err("missing mandatory export")
 				},
 			}
@@ -343,6 +343,7 @@ impl<'a, T: Config> ContractModule<'a, T> {
 			if import_fn_banlist.iter().any(|f| import.field().as_bytes() == *f)
 				|| !C::can_satisfy(import.module().as_bytes(), import.field().as_bytes(), func_ty)
 			{
+				log::debug!(target: "runtime::contracts", "Non existent function: {}", import.field());
 				return Err("module imports a non-existent function");
 			}
 		}
