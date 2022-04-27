@@ -17,6 +17,7 @@
 
 //! Environment definition of the wasm smart-contract runtime.
 
+use super::ModuleType;
 use crate::{
 	exec::{ExecError, ExecResult, Ext, StorageKey, TopicOf},
 	gas::{ChargedAmount, Token},
@@ -278,8 +279,9 @@ impl RuntimeCosts {
 			ContainsStorage(len) => s
 				.contains_storage
 				.saturating_add(s.contains_storage_per_byte.saturating_mul(len.into())),
-			GetStorage(len) =>
-				s.get_storage.saturating_add(s.get_storage_per_byte.saturating_mul(len.into())),
+			GetStorage(len) => {
+				s.get_storage.saturating_add(s.get_storage_per_byte.saturating_mul(len.into()))
+			},
 			#[cfg(feature = "unstable-interface")]
 			TakeStorage(len) => s
 				.take_storage
@@ -426,6 +428,7 @@ fn already_charged(_: u32) -> Option<RuntimeCosts> {
 
 /// Can only be used for one call.
 pub struct Runtime<'a, E: Ext + 'a> {
+	module_type: ModuleType,
 	ext: &'a mut E,
 	input_data: Option<Vec<u8>>,
 	memory: sp_sandbox::default_executor::Memory,
@@ -439,11 +442,12 @@ where
 		UncheckedFrom<<E::T as frame_system::Config>::Hash> + AsRef<[u8]>,
 {
 	pub fn new(
+		module_type: ModuleType,
 		ext: &'a mut E,
 		input_data: Vec<u8>,
 		memory: sp_sandbox::default_executor::Memory,
 	) -> Self {
-		Runtime { ext, input_data: Some(input_data), memory, trap_reason: None }
+		Runtime { module_type, ext, input_data: Some(input_data), memory, trap_reason: None }
 	}
 
 	/// Converts the sandbox result and the runtime state into the execution outcome.
@@ -464,10 +468,11 @@ where
 						.ok_or_else(|| Error::<E::T>::InvalidCallFlags)?;
 					Ok(ExecReturnValue { flags, data: Bytes(data) })
 				},
-				TrapReason::Termination =>
-					Ok(ExecReturnValue { flags: ReturnFlags::empty(), data: Bytes(Vec::new()) }),
+				TrapReason::Termination => {
+					Ok(ExecReturnValue { flags: ReturnFlags::empty(), data: Bytes(Vec::new()) })
+				},
 				TrapReason::SupervisorError(error) => Err(error)?,
-			}
+			};
 		}
 
 		// Check the exact type of the error.
@@ -482,8 +487,9 @@ where
 			// a trap for now. Eventually, we might want to revisit this.
 			Err(sp_sandbox::Error::Module) => Err("validation error")?,
 			// Any other kind of a trap should result in a failure.
-			Err(sp_sandbox::Error::Execution) | Err(sp_sandbox::Error::OutOfBounds) =>
-				Err(Error::<E::T>::ContractTrapped)?,
+			Err(sp_sandbox::Error::Execution) | Err(sp_sandbox::Error::OutOfBounds) => {
+				Err(Error::<E::T>::ContractTrapped)?
+			},
 		}
 	}
 
@@ -613,7 +619,7 @@ where
 		create_token: impl FnOnce(u32) -> Option<RuntimeCosts>,
 	) -> Result<(), DispatchError> {
 		if allow_skip && out_ptr == SENTINEL {
-			return Ok(())
+			return Ok(());
 		}
 
 		let buf_len = buf.len() as u32;
@@ -633,6 +639,22 @@ where
 			.map_err(|_| Error::<E::T>::OutOfBounds)?;
 
 		Ok(())
+	}
+
+	fn write_to_contract(&mut self, input: &[u8]) -> Result<u32, DispatchError> {
+		// self.write_sandbox_memory(ptr, buf)
+		// let out_size = input.len() as u32;
+		// self.call(
+		// 	CallFlags::ALLOW_REENTRY,
+		// 	CallType::Call { callee_ptr: , value_ptr: (), gas: () }, input_data_ptr, input_data_len, output_ptr, output_len_ptr)
+		// let result = env.call_function1("allocate", &[out_size.into()])?;
+		// let target_ptr = ref_to_u32(&result)?;
+		// if target_ptr == 0 {
+		// 	return Err(CommunicationError::zero_address().into());
+		// }
+		// write_region(&env.memory(), target_ptr, input)?;
+		// Ok(target_ptr)
+		Ok(0)
 	}
 
 	/// Write the given buffer to the designated location in the sandbox memory.
@@ -778,7 +800,7 @@ where
 			},
 			CallType::DelegateCall { code_hash_ptr } => {
 				if flags.contains(CallFlags::ALLOW_REENTRY) {
-					return Err(Error::<E::T>::InvalidCallFlags.into())
+					return Err(Error::<E::T>::InvalidCallFlags.into());
 				}
 				let code_hash = self.read_sandbox_memory_as(code_hash_ptr)?;
 				self.ext.delegate_call(code_hash, input_data)
@@ -792,7 +814,7 @@ where
 				return Err(TrapReason::Return(ReturnData {
 					flags: return_value.flags.bits(),
 					data: return_value.data.0,
-				}))
+				}));
 			}
 		}
 
@@ -852,6 +874,35 @@ where
 		Err(TrapReason::Termination)
 	}
 }
+
+/// A kibi (kilo binary)
+const KI: u32 = 1024;
+/// A mibi (mega binary)
+const MI: u32 = 1024 * 1024;
+/// Max key length for db_write/db_read/db_remove/db_scan (when VM reads the key argument from Wasm memory)
+const MAX_LENGTH_DB_KEY: u32 = 64 * KI;
+/// Max value length for db_write (when VM reads the value argument from Wasm memory)
+const MAX_LENGTH_DB_VALUE: u32 = 128 * KI;
+/// Typically 20 (Cosmos SDK, Ethereum), 32 (Nano, Substrate) or 54 (MockApi)
+const MAX_LENGTH_CANONICAL_ADDRESS: u32 = 64;
+/// The max length of human address inputs (in bytes).
+/// The maximum allowed size for [bech32](https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki#bech32)
+/// is 90 characters and we're adding some safety margin around that for other formats.
+const MAX_LENGTH_HUMAN_ADDRESS: u32 = 256;
+const MAX_LENGTH_QUERY_CHAIN_REQUEST: u32 = 64 * KI;
+/// Length of a serialized Ed25519  signature
+const MAX_LENGTH_ED25519_SIGNATURE: u32 = 64;
+/// Max length of a Ed25519 message in bytes.
+/// This is an arbitrary value, for performance / memory contraints. If you need to verify larger
+/// messages, let us know.
+const MAX_LENGTH_ED25519_MESSAGE: u32 = 128 * 1024;
+/// Max number of batch Ed25519 messages / signatures / public_keys.
+/// This is an arbitrary value, for performance / memory contraints. If you need to batch-verify a
+/// larger number of signatures, let us know.
+const MAX_COUNT_ED25519_BATCH: u32 = 256;
+
+/// Max length for a debug message
+const MAX_LENGTH_DEBUG: u32 = 2 * MI;
 
 // This is the API exposed to contracts.
 //
@@ -2092,7 +2143,16 @@ define_env!(Env, <E: Ext>,
 	},
 
 			// ============ COSMWASM ============
-			[env] db_read(ctx, _key: u32) -> u32 => {
+			[env] db_read(ctx, key_ptr: u32) -> u32 => {
+				// let charged = ctx.charge_gas(RuntimeCosts::GetStorage(ctx.ext.max_value_size()))?;
+				// let mut key: StorageKey = [0; 32];
+				// ctx.read_sandbox_memory_into_buf(key_ptr, &mut key)?;
+				// if let Some(value) = ctx.ext.get_storage(&key) {
+				// 	ctx.adjust_gas(charged, RuntimeCosts::GetStorage(value.len() as u32));
+				// 	ctx.write_sandbox_output(out_ptr, out_len_ptr, &value, false, already_charged)?;
+				// } else {
+				// 	ctx.adjust_gas(charged, RuntimeCosts::GetStorage(0));
+				// }
 				Ok(0)
 			},
 			[env] db_write(ctx, _key: u32, _value: u32) => {
@@ -2131,9 +2191,18 @@ define_env!(Env, <E: Ext>,
 			[env] ed25519_batch_verify(ctx, messages_ptr: u32, signatures_ptr: u32, public_keys_ptr: u32) -> u32 => {
 				Ok(0)
 			},
+
 			[env] debug(ctx, source_ptr: u32) => {
+				ctx.charge_gas(RuntimeCosts::DebugMessage)?;
+				if ctx.ext.append_debug_buffer("") {
+					let data = ctx.read_sandbox_memory(source_ptr, MAX_LENGTH_DEBUG)?;
+					let msg = core::str::from_utf8(&data)
+						.map_err(|_| <Error<E::T>>::DebugMessageInvalidUTF8)?;
+					ctx.ext.append_debug_buffer(msg);
+				}
 				Ok(())
 			},
+
 			[env] query_chain(ctx, request: u32) -> u32 => {
 				Ok(0)
 			},

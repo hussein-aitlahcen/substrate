@@ -34,7 +34,7 @@ use crate::{Error, HostError, HostFuncType, ReturnValue, Value, TARGET};
 /// The linear memory used by the sandbox.
 #[derive(Clone)]
 pub struct Memory {
-	memref: MemoryRef,
+	pub memref: MemoryRef,
 }
 
 impl super::SandboxMemory for Memory {
@@ -279,6 +279,10 @@ impl<T> super::SandboxInstance<T> for Instance<T> {
 		let global = self.instance.export_by_name(name)?.as_global()?.get();
 
 		Some(to_interface(global))
+	}
+
+	fn get_export(&self, name: &str) -> Option<wasmi::ExternVal> {
+		self.instance.export_by_name(name)
 	}
 }
 

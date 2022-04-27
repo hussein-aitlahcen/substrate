@@ -49,6 +49,7 @@ use sp_core::RuntimeDebug;
 use sp_std::prelude::*;
 
 pub use sp_wasm_interface::{ReturnValue, Value};
+use wasmi::ExternVal;
 
 #[cfg(not(all(feature = "wasmer-sandbox", not(feature = "std"))))]
 pub use self::embedded_executor as default_executor;
@@ -187,4 +188,7 @@ pub trait SandboxInstance<State>: Sized {
 	///
 	/// Returns `Some(_)` if the global could be found.
 	fn get_global_val(&self, name: &str) -> Option<Value>;
+
+	/// Get export
+	fn get_export(&self, name: &str) -> Option<ExternVal>;
 }

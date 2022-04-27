@@ -36,16 +36,19 @@ use crate::{
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::dispatch::{DispatchError, DispatchResult};
 use sp_core::crypto::UncheckedFrom;
-use sp_sandbox::{SandboxEnvironmentBuilder, SandboxInstance, SandboxMemory};
-use sp_std::prelude::*;
+use sp_sandbox::{
+	default_executor::Memory, SandboxEnvironmentBuilder, SandboxInstance, SandboxMemory,
+};
 use sp_std::fmt::Debug;
+use sp_std::prelude::*;
 #[cfg(test)]
 pub use tests::MockExt;
+use wasmi::ExternVal;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Encode, Decode, scale_info::TypeInfo)]
 pub enum ModuleType {
 	Ink,
-	Cosmwasm
+	Cosmwasm,
 }
 
 /// A prepared wasm module ready for execution.
@@ -220,34 +223,58 @@ where
 		function: &ExportedFunction,
 		input_data: Vec<u8>,
 	) -> ExecResult {
-		let memory = sp_sandbox::default_executor::Memory::new(self.initial, Some(self.maximum))
-			.unwrap_or_else(|_| {
-				// unlike `.expect`, explicit panic preserves the source location.
-				// Needed as we can't use `RUST_BACKTRACE` in here.
-				panic!(
-					"exec.prefab_module.initial can't be greater than exec.prefab_module.maximum;
-						thus Memory::new must not fail;
-						qed"
-				)
-			});
-
-		let mut imports = sp_sandbox::default_executor::EnvironmentDefinitionBuilder::new();
-		imports.add_memory(self::prepare::IMPORT_MODULE_MEMORY, "memory", memory.clone());
-		runtime::Env::impls(&mut |module, name, func_ptr| {
-			imports.add_host_func(module, name, func_ptr);
-		});
-
+		let module_type = self.module_type;
+		let initial = self.initial;
+		let maximum = self.maximum;
 		// We store before executing so that the code hash is available in the constructor.
 		let code = self.code.clone();
 		if let &ExportedFunction::Constructor = function {
 			code_cache::store(self, true)?;
 		}
+		let mut imports = sp_sandbox::default_executor::EnvironmentDefinitionBuilder::new();
+		let memory = match module_type {
+			ModuleType::Ink => {
+				let memory = sp_sandbox::default_executor::Memory::new(initial, Some(maximum))
+					.unwrap_or_else(|_| {
+						// unlike `.expect`, explicit panic preserves the source location.
+						// Needed as we can't use `RUST_BACKTRACE` in here.
+						panic!(
+							"exec.prefab_module.initial can't be greater than exec.prefab_module.maximum;
+						thus Memory::new must not fail;
+						qed"
+						)
+					});
+				imports.add_memory(self::prepare::IMPORT_MODULE_MEMORY, "memory", memory.clone());
+				Ok(memory)
+			},
+			ModuleType::Cosmwasm => {
+				let instance = sp_sandbox::default_executor::Instance::new(
+					&code,
+					&sp_sandbox::default_executor::EnvironmentDefinitionBuilder::new(),
+					&mut (),
+				)
+				.map_err(|_| {
+					DispatchError::Other("Unable to instantiate contract to get memory")
+				})?;
+				match instance.get_export("memory") {
+					Some(ExternVal::Memory(memory)) => Ok(Memory { memref: memory }),
+					_ => Err(DispatchError::Other("COSMWASM contracts must export memory")),
+				}
+			},
+		}?;
+
+		runtime::Env::impls(&mut |module, name, func_ptr| {
+			imports.add_host_func(module, name, func_ptr);
+		});
 
 		// Instantiate the instance from the instrumented module code and invoke the contract
 		// entrypoint.
-		let mut runtime = Runtime::new(ext, input_data, memory);
+		let mut runtime = Runtime::new(module_type, ext, input_data, memory);
 		let result = sp_sandbox::default_executor::Instance::new(&code, &imports, &mut runtime)
-			.and_then(|mut instance| instance.invoke(function.identifier(), &[], &mut runtime));
+			.and_then(|mut instance| {
+				// very very ugly
+				instance.invoke(function.identifier(), &[], &mut runtime)
+			});
 
 		runtime.to_execution_result(result)
 	}
@@ -431,8 +458,9 @@ mod tests {
 			let entry = self.storage.entry(key);
 			let result = match (entry, take_old) {
 				(Entry::Vacant(_), _) => WriteOutcome::New,
-				(Entry::Occupied(entry), false) =>
-					WriteOutcome::Overwritten(entry.remove().len() as u32),
+				(Entry::Occupied(entry), false) => {
+					WriteOutcome::Overwritten(entry.remove().len() as u32)
+				},
 				(Entry::Occupied(entry), true) => WriteOutcome::Taken(entry.remove()),
 			};
 			if let Some(value) = value {

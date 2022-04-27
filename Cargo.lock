@@ -5765,6 +5765,7 @@ dependencies = [
  "sp-sandbox",
  "sp-std",
  "wasm-instrument",
+ "wasmi",
  "wasmi-validation",
  "wat",
 ]

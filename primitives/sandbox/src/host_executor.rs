@@ -265,6 +265,10 @@ impl<T> super::SandboxInstance<T> for Instance<T> {
 	fn get_global_val(&self, name: &str) -> Option<Value> {
 		sandbox::get_global_val(self.instance_idx, name)
 	}
+
+	fn get_export(&self, name: &str) -> Option<wasmi::ExternVal> {
+		None
+	}
 }
 
 impl<T> Drop for Instance<T> {
