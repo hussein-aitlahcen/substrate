@@ -2092,8 +2092,8 @@ define_env!(Env, <E: Ext>,
 	},
 
 			// ============ COSMWASM ============
-			[env] db_read(ctx, _key: u32) => {
-				Ok(())
+			[env] db_read(ctx, _key: u32) -> u32 => {
+				Ok(0)
 			},
 			[env] db_write(ctx, _key: u32, _value: u32) => {
 				Ok(())
@@ -2101,40 +2101,40 @@ define_env!(Env, <E: Ext>,
 			[env] db_remove(ctx, _key: u32) => {
 				Ok(())
 			},
-			[env] db_scan(ctx, _statr_ptr: u32, _end_ptr: u32, _order: i32) => {
-				Ok(())
+
+			[env] db_scan(ctx, _statr_ptr: u32, _end_ptr: u32, _order: i32) -> u32 => {
+				Ok(0)
 			},
-			[env] db_next(ctx, _iterator_id: u32) => {
-				Ok(())
+			[env] db_next(ctx, _iterator_id: u32) -> u32 => {
+				Ok(0)
 			},
-			[env] addr_validate(ctx, _key: u32, _value: u32) => {
-				Ok(())
+
+			[env] addr_validate(ctx, source_ptr: u32) -> u32 => {
+				Ok(0)
 			},
-			[env] addr_validate(ctx, source_ptr: u32) => {
-				Ok(())
+			[env] addr_canonicalize(ctx, source_ptr: u32, destination_ptr: u32) -> u32 => {
+				Ok(0)
 			},
-			[env] addr_canonicalize(ctx, source_ptr: u32, destination_ptr: u32) => {
-				Ok(())
+			[env] addr_humanize(ctx, source_ptr: u32, destination_ptr: u32) -> u32 => {
+				Ok(0)
 			},
-			[env] addr_humanize(ctx, source_ptr: u32, destination_ptr: u32) => {
-				Ok(())
+
+			[env] secp256k1_verify(ctx, message_hash_ptr: u32, signature_ptr: u32, public_key_ptr: u32) -> u32 => {
+				Ok(0)
 			},
-			[env] secp256k1_verify(ctx, message_hash_ptr: u32, signature_ptr: u32, public_key_ptr: u32) => {
-				Ok(())
+			[env] secp256k1_recover_pubkey(ctx, message_hash_ptr: u32, signature_ptr: u32, recovery_param: u32) -> u64 => {
+				Ok(0)
 			},
-			[env] secp256k1_recover_pubkey(ctx, message_hash_ptr: u32, signature_ptr: u32, recovery_param: u32) => {
-				Ok(())
+			[env] ed25519_verify(ctx, message_ptr: u32, signature_ptr: u32, public_key_ptr: u32) -> u32 => {
+				Ok(0)
 			},
-			[env] ed25519_verify(ctx, message_ptr: u32, signature_ptr: u32, public_key_ptr: u32) => {
-				Ok(())
-			},
-			[env] ed25519_batch_verify(ctx, messages_ptr: u32, signatures_ptr: u32, public_keys_ptr: u32) => {
-				Ok(())
+			[env] ed25519_batch_verify(ctx, messages_ptr: u32, signatures_ptr: u32, public_keys_ptr: u32) -> u32 => {
+				Ok(0)
 			},
 			[env] debug(ctx, source_ptr: u32) => {
 				Ok(())
 			},
-			[env] query_chain(ctx, request: u32) => {
-				Ok(())
+			[env] query_chain(ctx, request: u32) -> u32 => {
+				Ok(0)
 			},
 );
