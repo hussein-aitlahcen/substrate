@@ -67,9 +67,9 @@ impl<'a, T: Config> ContractModule<'a, T> {
 	/// Memory section contains declarations of internal linear memories, so if we find one
 	/// we reject such a module.
 	fn ensure_no_internal_memory(&self) -> Result<(), &'static str> {
-		if self.module.memory_section().map_or(false, |ms| ms.entries().len() > 0) {
-			return Err("module declares internal memory");
-		}
+		// if self.module.memory_section().map_or(false, |ms| ms.entries().len() > 0) {
+		// 	return Err("module declares internal memory");
+		// }
 		Ok(())
 	}
 
