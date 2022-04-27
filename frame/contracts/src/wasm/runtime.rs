@@ -246,8 +246,7 @@ impl RuntimeCosts {
 			CopyToContract(len) => s.input_per_byte.saturating_mul(len.into()),
 			Caller => s.caller,
 			IsContract => s.is_contract,
-			#[cfg(feature = "unstable-interface")]
-			CodeHash => s.code_hash,
+			#[cfg(feature = "unstable-interface")]Hash => s.code_hash,
 			#[cfg(feature = "unstable-interface")]
 			OwnCodeHash => s.own_code_hash,
 			CallerIsOrigin => s.caller_is_origin,
@@ -431,7 +430,7 @@ pub struct Runtime<'a, E: Ext + 'a> {
 	module_type: ModuleType,
 	ext: &'a mut E,
 	input_data: Option<Vec<u8>>,
-	memory: sp_sandbox::default_executor::Memory,
+	pub memory: sp_sandbox::default_executor::Memory,
 	trap_reason: Option<TrapReason>,
 }
 
@@ -448,6 +447,10 @@ where
 		memory: sp_sandbox::default_executor::Memory,
 	) -> Self {
 		Runtime { module_type, ext, input_data: Some(input_data), memory, trap_reason: None }
+	}
+
+	pub fn module_type(&self) -> ModuleType {
+		self.module_type
 	}
 
 	/// Converts the sandbox result and the runtime state into the execution outcome.
@@ -2144,66 +2147,71 @@ define_env!(Env, <E: Ext>,
 
 			// ============ COSMWASM ============
 			[env] db_read(ctx, key_ptr: u32) -> u32 => {
-				// let charged = ctx.charge_gas(RuntimeCosts::GetStorage(ctx.ext.max_value_size()))?;
-				// let mut key: StorageKey = [0; 32];
-				// ctx.read_sandbox_memory_into_buf(key_ptr, &mut key)?;
-				// if let Some(value) = ctx.ext.get_storage(&key) {
-				// 	ctx.adjust_gas(charged, RuntimeCosts::GetStorage(value.len() as u32));
-				// 	ctx.write_sandbox_output(out_ptr, out_len_ptr, &value, false, already_charged)?;
-				// } else {
-				// 	ctx.adjust_gas(charged, RuntimeCosts::GetStorage(0));
-				// }
+				log::debug!(target: "runtime::contracts", "DbRead");
 				Ok(0)
 			},
 			[env] db_write(ctx, _key: u32, _value: u32) => {
+				log::debug!(target: "runtime::contracts", "DbWrite");
 				Ok(())
 			},
 			[env] db_remove(ctx, _key: u32) => {
+				log::debug!(target: "runtime::contracts", "DbRemove");
 				Ok(())
 			},
 
 			[env] db_scan(ctx, _statr_ptr: u32, _end_ptr: u32, _order: i32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "DbScan");
 				Ok(0)
 			},
 			[env] db_next(ctx, _iterator_id: u32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "DbNext");
 				Ok(0)
 			},
 
 			[env] addr_validate(ctx, source_ptr: u32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "AddrValidate");
 				Ok(0)
 			},
 			[env] addr_canonicalize(ctx, source_ptr: u32, destination_ptr: u32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "AddrCanonicalize");
 				Ok(0)
 			},
 			[env] addr_humanize(ctx, source_ptr: u32, destination_ptr: u32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "AddrHumanize");
 				Ok(0)
 			},
 
 			[env] secp256k1_verify(ctx, message_hash_ptr: u32, signature_ptr: u32, public_key_ptr: u32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "Verify1");
 				Ok(0)
 			},
 			[env] secp256k1_recover_pubkey(ctx, message_hash_ptr: u32, signature_ptr: u32, recovery_param: u32) -> u64 => {
+				log::debug!(target: "runtime::contracts", "Pubkey");
 				Ok(0)
 			},
 			[env] ed25519_verify(ctx, message_ptr: u32, signature_ptr: u32, public_key_ptr: u32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "Verify");
 				Ok(0)
 			},
 			[env] ed25519_batch_verify(ctx, messages_ptr: u32, signatures_ptr: u32, public_keys_ptr: u32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "BatchVerify");
 				Ok(0)
 			},
 
 			[env] debug(ctx, source_ptr: u32) => {
-				ctx.charge_gas(RuntimeCosts::DebugMessage)?;
-				if ctx.ext.append_debug_buffer("") {
-					let data = ctx.read_sandbox_memory(source_ptr, MAX_LENGTH_DEBUG)?;
-					let msg = core::str::from_utf8(&data)
-						.map_err(|_| <Error<E::T>>::DebugMessageInvalidUTF8)?;
-					ctx.ext.append_debug_buffer(msg);
-				}
+				log::debug!(target: "runtime::contracts", "Debug");
+				// ctx.charge_gas(RuntimeCosts::DebugMessage)?;
+				// if ctx.ext.append_debug_buffer("") {
+				// 	let data = ctx.read_sandbox_memory(source_ptr, MAX_LENGTH_DEBUG)?;
+				// 	let msg = core::str::from_utf8(&data)
+				// 		.map_err(|_| <Error<E::T>>::DebugMessageInvalidUTF8)?;
+				// 	ctx.ext.append_debug_buffer(msg);
+				// }
 				Ok(())
 			},
 
 			[env] query_chain(ctx, request: u32) -> u32 => {
+				log::debug!(target: "runtime::contracts", "QueryChain");
 				Ok(0)
 			},
 );

@@ -28,7 +28,7 @@ mod runtime;
 pub use crate::wasm::code_cache::reinstrument;
 pub use crate::wasm::runtime::{CallFlags, ReturnCode, Runtime, RuntimeCosts};
 use crate::{
-	exec::{ExecResult, Executable, ExportedFunction, Ext},
+	exec::{ExecError, ExecResult, Executable, ExportedFunction, Ext},
 	gas::GasMeter,
 	wasm::env_def::FunctionImplProvider,
 	AccountIdOf, BalanceOf, CodeHash, CodeStorage, Config, Schedule,
@@ -37,7 +37,7 @@ use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::dispatch::{DispatchError, DispatchResult};
 use sp_core::crypto::UncheckedFrom;
 use sp_sandbox::{
-	default_executor::Memory, SandboxEnvironmentBuilder, SandboxInstance, SandboxMemory,
+	default_executor::Memory, SandboxEnvironmentBuilder, SandboxInstance, SandboxMemory, Value,
 };
 use sp_std::fmt::Debug;
 use sp_std::prelude::*;
@@ -235,50 +235,54 @@ where
 			code_cache::store(self, true)?;
 		}
 		let mut imports = sp_sandbox::default_executor::EnvironmentDefinitionBuilder::new();
-		let memory = match module_type {
-			ModuleType::Ink => {
-				let memory = sp_sandbox::default_executor::Memory::new(initial, Some(maximum))
-					.unwrap_or_else(|_| {
-						// unlike `.expect`, explicit panic preserves the source location.
-						// Needed as we can't use `RUST_BACKTRACE` in here.
-						panic!(
-							"exec.prefab_module.initial can't be greater than exec.prefab_module.maximum;
-						thus Memory::new must not fail;
-						qed"
-						)
-					});
-				imports.add_memory(self::prepare::IMPORT_MODULE_MEMORY, "memory", memory.clone());
-				Ok(memory)
-			},
-			ModuleType::Cosmwasm => {
-				let instance = sp_sandbox::default_executor::Instance::new(
-					&code,
-					&sp_sandbox::default_executor::EnvironmentDefinitionBuilder::new(),
-					&mut (),
-				)
-				.map_err(|_| {
-					DispatchError::Other("Unable to instantiate contract to get memory")
-				})?;
-				match instance.get_export("memory") {
-					Some(ExternVal::Memory(memory)) => Ok(Memory { memref: memory }),
-					_ => Err(DispatchError::Other("COSMWASM contracts must export memory")),
-				}
-			},
-		}?;
-
 		runtime::Env::impls(&mut |module, name, func_ptr| {
 			imports.add_host_func(module, name, func_ptr);
 		});
-
-		// Instantiate the instance from the instrumented module code and invoke the contract
-		// entrypoint.
-		let mut runtime = Runtime::new(module_type, ext, input_data, memory);
-		let result = sp_sandbox::default_executor::Instance::new(&code, &imports, &mut runtime)
-			.and_then(|mut instance| {
-				instance.invoke(function.identifier(module_type), &[], &mut runtime)
+		let memory = sp_sandbox::default_executor::Memory::new(initial, Some(maximum))
+			.unwrap_or_else(|_| {
+				// unlike `.expect`, explicit panic preserves the source location.
+				// Needed as we can't use `RUST_BACKTRACE` in here.
+				panic!(
+					"exec.prefab_module.initial can't be greater than exec.prefab_module.maximum;
+						thus Memory::new must not fail;
+						qed"
+				)
 			});
+		let memory = match module_type {
+			ModuleType::Ink => {
+				imports.add_memory(self::prepare::IMPORT_MODULE_MEMORY, "memory", memory.clone());
+				Ok(memory)
+			},
+			ModuleType::Cosmwasm => Result::<_, ExecError>::Ok(memory),
+		}?;
 
-		runtime.to_execution_result(result)
+		let result = {
+			// Instantiate the instance from the instrumented module code and invoke the contract
+			// entrypoint.
+			let mut runtime = Runtime::new(module_type, ext, input_data, memory);
+			let result = sp_sandbox::default_executor::Instance::new(&code, &imports, &mut runtime)
+				.and_then(|mut instance| {
+					let args = match module_type {
+						ModuleType::Ink => vec![],
+						ModuleType::Cosmwasm => {
+							match instance.get_export("memory").expect("impossible") {
+								ExternVal::Memory(memory) => {
+									log::debug!(target: "runtime::contracts", "Set internal memory");
+									runtime.memory = Memory { memref: memory };
+									vec![Value::I32(0), Value::I32(0), Value::I32(0)]
+								},
+								_ => panic!("impossible"),
+							}
+						},
+					};
+					log::debug!(target: "runtime::contracts", "Executing function {}", function.identifier(module_type));
+					instance.invoke(function.identifier(module_type), &args, &mut runtime)
+				});
+			log::debug!(target: "runtime::contracts", "Call completed {:?}", result);
+			runtime.to_execution_result(result)
+		};
+
+		result
 	}
 
 	fn code_hash(&self) -> &CodeHash<T> {

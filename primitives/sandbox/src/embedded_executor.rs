@@ -271,7 +271,10 @@ impl<T> super::SandboxInstance<T> for Instance<T> {
 		match result {
 			Ok(None) => Ok(ReturnValue::Unit),
 			Ok(Some(val)) => Ok(ReturnValue::Value(to_interface(val))),
-			Err(_err) => Err(Error::Execution),
+			Err(err) => {
+				log::debug!(target: "runtime::contracts", "Invoke error {:?}", err);
+				Err(Error::Execution)
+			},
 		}
 	}
 
