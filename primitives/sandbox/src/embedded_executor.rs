@@ -37,6 +37,39 @@ pub struct Memory {
 	pub memref: MemoryRef,
 }
 
+impl Memory {
+	pub fn typed_get<T>(&self, ptr: u32) -> Result<T, Error> {
+		if core::mem::size_of::<T>() == 0 {
+			Err(Error::OutOfBounds)
+		} else {
+			let mut t: T = unsafe { core::mem::zeroed() };
+			let b = unsafe {
+				core::slice::from_raw_parts_mut(
+					&mut t as *mut T as *mut u8,
+					core::mem::size_of::<T>(),
+				)
+			};
+			<Self as super::SandboxMemory>::get(self, ptr, b)?;
+			Ok(t)
+		}
+	}
+
+	pub fn typed_set<T>(&self, ptr: u32, t: &T) -> Result<(), Error> {
+		if core::mem::size_of::<T>() == 0 {
+			Err(Error::OutOfBounds)
+		} else {
+			let b = unsafe {
+				core::slice::from_raw_parts(
+					t as *const T as *const u8,
+					core::mem::size_of::<T>(),
+				)
+			};
+			<Self as super::SandboxMemory>::set(self, ptr, b)?;
+			Ok(())
+		}
+	}
+}
+
 impl super::SandboxMemory for Memory {
 	fn new(initial: u32, maximum: Option<u32>) -> Result<Memory, Error> {
 		Ok(Memory {
@@ -176,7 +209,7 @@ impl<T> ImportResolver for EnvironmentDefinitionBuilder<T> {
 					module_name,
 					field_name,
 				);
-				return Err(wasmi::Error::Instantiation(String::new()))
+				return Err(wasmi::Error::Instantiation(String::new()));
 			},
 		};
 		Ok(FuncInstance::alloc_host(signature.clone(), host_func_idx.0))
@@ -212,7 +245,7 @@ impl<T> ImportResolver for EnvironmentDefinitionBuilder<T> {
 					module_name,
 					field_name,
 				);
-				return Err(wasmi::Error::Instantiation(String::new()))
+				return Err(wasmi::Error::Instantiation(String::new()));
 			},
 		};
 		Ok(memory.memref.clone())
@@ -322,7 +355,7 @@ mod tests {
 
 		fn env_assert(_e: &mut State, args: &[Value]) -> Result<ReturnValue, HostError> {
 			if args.len() != 1 {
-				return Err(HostError)
+				return Err(HostError);
 			}
 			let condition = args[0].as_i32().ok_or_else(|| HostError)?;
 			if condition != 0 {
@@ -333,7 +366,7 @@ mod tests {
 		}
 		fn env_inc_counter(e: &mut State, args: &[Value]) -> Result<ReturnValue, HostError> {
 			if args.len() != 1 {
-				return Err(HostError)
+				return Err(HostError);
 			}
 			let inc_by = args[0].as_i32().ok_or_else(|| HostError)?;
 			e.counter += inc_by as u32;
@@ -342,7 +375,7 @@ mod tests {
 		/// Function that takes one argument of any type and returns that value.
 		fn env_polymorphic_id(_e: &mut State, args: &[Value]) -> Result<ReturnValue, HostError> {
 			if args.len() != 1 {
-				return Err(HostError)
+				return Err(HostError);
 			}
 			Ok(ReturnValue::Value(args[0]))
 		}

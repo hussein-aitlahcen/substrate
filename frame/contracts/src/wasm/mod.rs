@@ -21,6 +21,7 @@
 #[macro_use]
 mod env_def;
 mod code_cache;
+mod memory;
 mod prepare;
 mod runtime;
 
@@ -30,14 +31,19 @@ pub use crate::wasm::runtime::{CallFlags, ReturnCode, Runtime, RuntimeCosts};
 use crate::{
 	exec::{ExecError, ExecResult, Executable, ExportedFunction, Ext},
 	gas::GasMeter,
-	wasm::env_def::FunctionImplProvider,
+	wasm::{env_def::FunctionImplProvider, memory::write_region},
 	AccountIdOf, BalanceOf, CodeHash, CodeStorage, Config, Schedule,
 };
 use codec::{Decode, Encode, MaxEncodedLen};
-use frame_support::dispatch::{DispatchError, DispatchResult};
+use cosmwasm_std::*;
+use frame_support::{
+	dispatch::{DispatchError, DispatchResult},
+	traits::TryCollect,
+};
 use sp_core::crypto::UncheckedFrom;
 use sp_sandbox::{
-	default_executor::Memory, SandboxEnvironmentBuilder, SandboxInstance, SandboxMemory, Value,
+	default_executor::Memory, ReturnValue, SandboxEnvironmentBuilder, SandboxInstance,
+	SandboxMemory, Value,
 };
 use sp_std::fmt::Debug;
 use sp_std::prelude::*;
@@ -260,24 +266,62 @@ where
 			// Instantiate the instance from the instrumented module code and invoke the contract
 			// entrypoint.
 			let mut runtime = Runtime::new(module_type, ext, input_data, memory);
-			let result = sp_sandbox::default_executor::Instance::new(&code, &imports, &mut runtime)
-				.and_then(|mut instance| {
-					let args = match module_type {
-						ModuleType::Ink => vec![],
-						ModuleType::Cosmwasm => {
-							match instance.get_export("memory").expect("impossible") {
-								ExternVal::Memory(memory) => {
-									log::debug!(target: "runtime::contracts", "Set internal memory");
-									runtime.memory = Memory { memref: memory };
-									vec![Value::I32(0), Value::I32(0), Value::I32(0)]
-								},
-								_ => panic!("impossible"),
+			let mut instance =
+				sp_sandbox::default_executor::Instance::new(&code, &imports, &mut runtime)
+					.map_err(|_| DispatchError::Other(""))?;
+			let result = {
+				let function_name = function.identifier(module_type);
+				log::debug!(target: "runtime::contracts", "Executing function {}", function_name);
+				match module_type {
+					ModuleType::Ink => instance.invoke(function_name, &[], &mut runtime),
+					ModuleType::Cosmwasm => {
+						match instance.get_export("memory").expect("impossible") {
+							ExternVal::Memory(memory) => {
+								log::debug!(target: "runtime::contracts", "Set internal memory");
+								runtime.memory = Memory { memref: memory };
+							},
+							_ => panic!("impossible"),
+						}
+						let mut allocate = |x| -> Result<u32, DispatchError> {
+							match instance.invoke("allocate", &[Value::I32(x as i32)], &mut runtime)
+							{
+								Ok(ReturnValue::Value(Value::I32(v))) => Ok(v as u32),
+								_ => Err(DispatchError::Other("")),
 							}
-						},
-					};
-					log::debug!(target: "runtime::contracts", "Executing function {}", function.identifier(module_type));
-					instance.invoke(function.identifier(module_type), &args, &mut runtime)
-				});
+						};
+						// let mut deallocate = |ptr: u32| {
+						// 	instance.invoke(
+						// 		"deallocate",
+						// 		&[Value::I32(ptr as i32)],
+						// 		&mut runtime,
+						// 	)
+						// };
+						let env = Env {
+							block: BlockInfo {
+								height: 0,
+								time: Timestamp::from_seconds(0),
+								chain_id: "picasso".to_string(),
+							},
+							transaction: Some(TransactionInfo { index: 0 }),
+							contract: ContractInfo { address: Addr::unchecked("321") },
+						};
+						let info = MessageInfo { sender: Addr::unchecked("123"), funds: vec![] };
+						let args = vec![
+							to_vec(&env).map_err(|_| DispatchError::Other(""))?,
+							to_vec(&info).map_err(|_| DispatchError::Other(""))?,
+							vec![],
+						];
+						let mut arg_region_ptrs = Vec::<Value>::with_capacity(args.len());
+						for (arg, region_ptr) in args.iter()
+							.map(|arg| Result::<_, DispatchError>::Ok((arg, allocate(arg.len())?)))
+							.collect::<Result<Vec<_>, _>>()? {
+							write_region(&runtime.memory, region_ptr, &arg)?;
+							arg_region_ptrs.push(Value::I32(region_ptr as i32));
+						}
+						instance.invoke(function_name, &arg_region_ptrs, &mut runtime)
+					},
+				}
+			};
 			log::debug!(target: "runtime::contracts", "Call completed {:?}", result);
 			runtime.to_execution_result(result)
 		};

@@ -49,6 +49,8 @@ sp-runtime = { version = "6.0.0", default-features = false, path = "../../primit
 sp-sandbox = { version = "0.10.0-dev", default-features = false, path = "../../primitives/sandbox" }
 sp-std = { version = "4.0.0", default-features = false, path = "../../primitives/std" }
 
+cosmwasm-std = { version = "1.0.0-beta8", default-features = false }
+
 [dev-dependencies]
 assert_matches = "1"
 env_logger = "0.9"
