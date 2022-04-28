@@ -1,7 +1,7 @@
 use serde::{de, ser, Deserialize, Deserializer, Serialize};
 use sp_runtime::DispatchError;
 use sp_std::vec::Vec;
-use scale_info::prelude::string::String;
+use alloc::string::String;
 
 pub mod read_limits {
     /// A mibi (mega binary)
@@ -883,6 +883,11 @@ impl core::fmt::Display for CanonicalAddr {
     }
 }
 
+#[derive(
+    Serialize, Deserialize, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord,
+)]
+pub struct Timestamp(pub String);
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Env {
     pub block: BlockInfo,
@@ -954,7 +959,7 @@ pub struct BlockInfo {
     /// # };
     /// let millis = env.block.time.nanos() / 1_000_000;
     /// ```
-    pub time: u64,
+    pub time: Timestamp,
     pub chain_id: String,
 }
 

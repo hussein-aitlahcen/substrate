@@ -83,6 +83,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "runtime-benchmarks", recursion_limit = "512")]
 
+extern crate alloc;
+
 #[macro_use]
 mod gas;
 mod benchmarking;

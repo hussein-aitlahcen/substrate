@@ -30,6 +30,7 @@ pub fn read_region(memory: &Memory, ptr: u32, max_length: usize) -> MemoryResult
 	if region.length > max_length as u32 {
 		return Err(DispatchError::Other("region too big"));
 	}
+	log::debug!(target: "runtime::contracts", "Region: {:?}", region);
 	let mut data = vec![0u8; region.length as usize];
 	memory
 		.get(region.offset, &mut data)
@@ -46,6 +47,7 @@ pub fn write_region(memory: &Memory, ptr: u32, data: &[u8]) -> MemoryResult<()> 
 	if data.len() > region_capacity {
 		return Err(DispatchError::Other("memory region too small"));
 	}
+	log::debug!(target: "runtime::contracts", "Region: {:?}", region);
 	memory
 		.set(region.offset, data)
 		.map_err(|_| DispatchError::Other("couldn't extract region"))?;
@@ -53,20 +55,6 @@ pub fn write_region(memory: &Memory, ptr: u32, data: &[u8]) -> MemoryResult<()> 
     set_region(memory, ptr, region)?;
 	Ok(())
 }
-
-// pub fn typed_write_region<T>(memory: &Memory, ptr: u32, data: &T) -> MemoryResult<()> {
-// 	let mut region = get_region(memory, ptr)?;
-// 	let region_capacity = region.capacity as usize;
-// 	if data.len() > region_capacity {
-// 		return Err(DispatchError::Other("memory region too small"));
-// 	}
-// 	memory
-// 		.set(region.offset, data)
-// 		.map_err(|_| DispatchError::Other("couldn't extract region"))?;
-// 	region.length = data.len() as u32;
-//     set_region(memory, ptr, region)?;
-// 	Ok(())
-// }
 
 /// Reads in a Region at ptr in wasm memory and returns a copy of it
 fn get_region(memory: &Memory, ptr: u32) -> MemoryResult<Region> {

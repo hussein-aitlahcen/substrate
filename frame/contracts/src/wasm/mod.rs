@@ -214,6 +214,13 @@ where
 	serde_json::to_vec(data).map_err(|_| DispatchError::Other("couldn't serialize"))
 }
 
+pub fn to_string<T>(data: &T) -> Result<alloc::string::String, DispatchError>
+where
+	T: serde::ser::Serialize + ?Sized,
+{
+	serde_json::to_string(data).map_err(|_| DispatchError::Other("couldn't serialize"))
+}
+
 pub fn from_slice<'a, T: serde::de::Deserialize<'a>>(value: &'a [u8]) -> Result<T, DispatchError> {
 	serde_json::from_slice(value).map_err(|_| DispatchError::Other("couldn't deserialize"))
 }
@@ -300,16 +307,26 @@ where
 						}
 					};
 					let env = Env {
-						block: BlockInfo { height: 0, time: 0, chain_id: Default::default() },
+						block: BlockInfo {
+							height: 0,
+							time: Timestamp(
+								to_string(&0u64)
+									.map_err(|_| DispatchError::Other("marshall failed"))?,
+							),
+							chain_id: Default::default(),
+						},
 						transaction: Some(TransactionInfo { index: 0 }),
 						contract: ContractInfo { address: Addr::unchecked("321") },
 					};
 					let info = MessageInfo { sender: Addr::unchecked("123"), funds: vec![] };
 					log::debug!(target: "runtime::contracts", "Marshalling");
+					log::debug!(target: "runtime::contracts", "Env: {}", to_string(&env).map_err(|_| DispatchError::Other("marshall failed"))?);
+					log::debug!(target: "runtime::contracts", "Info: {}", to_string(&info).map_err(|_| DispatchError::Other("marshall failed"))?);
+					log::debug!(target: "runtime::contracts", "InstantiateMsg: {}", to_string(&Empty {}).map_err(|_| DispatchError::Other("marshall failed"))?);
 					let args = vec![
 						to_vec(&env).map_err(|_| DispatchError::Other("marshall failed"))?,
 						to_vec(&info).map_err(|_| DispatchError::Other("marshall failed"))?,
-						vec![],
+						to_vec(&Empty {}).map_err(|_| DispatchError::Other("marshall failed"))?,
 					];
 					let mut arg_region_ptrs = Vec::<Value>::with_capacity(args.len());
 					for (arg, region_ptr) in args

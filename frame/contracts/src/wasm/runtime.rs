@@ -449,10 +449,6 @@ where
 		Runtime { module_type, ext, input_data: Some(input_data), memory, trap_reason: None }
 	}
 
-	pub fn module_type(&self) -> ModuleType {
-		self.module_type
-	}
-
 	/// Converts the sandbox result and the runtime state into the execution outcome.
 	///
 	/// It evaluates information stored in the `trap_reason` variable of the runtime and
