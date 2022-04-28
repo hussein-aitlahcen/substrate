@@ -3,6 +3,505 @@ use sp_runtime::DispatchError;
 use sp_std::vec::Vec;
 use scale_info::prelude::string::String;
 
+pub mod read_limits {
+    /// A mibi (mega binary)
+    const MI: usize = 1024 * 1024;
+    /// Max length (in bytes) of the result data from an instantiate call.
+    pub const RESULT_INSTANTIATE: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from an execute call.
+    pub const RESULT_EXECUTE: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a migrate call.
+    pub const RESULT_MIGRATE: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a sudo call.
+    pub const RESULT_SUDO: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a reply call.
+    pub const RESULT_REPLY: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a query call.
+    pub const RESULT_QUERY: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a ibc_channel_open call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_CHANNEL_OPEN: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a ibc_channel_connect call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_CHANNEL_CONNECT: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a ibc_channel_close call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_CHANNEL_CLOSE: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a ibc_packet_receive call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_PACKET_RECEIVE: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a ibc_packet_ack call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_PACKET_ACK: usize = 64 * MI;
+    /// Max length (in bytes) of the result data from a ibc_packet_timeout call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_PACKET_TIMEOUT: usize = 64 * MI;
+}
+
+/// The limits for the JSON deserialization.
+///
+/// Those limits are not used when the Rust JSON deserializer is bypassed by using the
+/// public `call_*_raw` functions directly.
+pub mod deserialization_limits {
+    /// A kibi (kilo binary)
+    const KI: usize = 1024;
+    /// Max length (in bytes) of the result data from an instantiate call.
+    pub const RESULT_INSTANTIATE: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from an execute call.
+    pub const RESULT_EXECUTE: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a migrate call.
+    pub const RESULT_MIGRATE: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a sudo call.
+    pub const RESULT_SUDO: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a reply call.
+    pub const RESULT_REPLY: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a query call.
+    pub const RESULT_QUERY: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a ibc_channel_open call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_CHANNEL_OPEN: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a ibc_channel_connect call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_CHANNEL_CONNECT: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a ibc_channel_close call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_CHANNEL_CLOSE: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a ibc_packet_receive call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_PACKET_RECEIVE: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a ibc_packet_ack call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_PACKET_ACK: usize = 256 * KI;
+    /// Max length (in bytes) of the result data from a ibc_packet_timeout call.
+    #[cfg(feature = "stargate")]
+    pub const RESULT_IBC_PACKET_TIMEOUT: usize = 256 * KI;
+}
+
+/// This is used for cases when we use ReplyOn::Never and the id doesn't matter
+pub const UNUSED_MSG_ID: u64 = 0;
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Response<T = Empty> {
+    /// Optional list of messages to pass. These will be executed in order.
+    /// If the ReplyOn variant matches the result (Always, Success on Ok, Error on Err),
+    /// the runtime will invoke this contract's `reply` entry point
+    /// after execution. Otherwise, they act like "fire and forget".
+    /// Use `SubMsg::new` to create messages with the older "fire and forget" semantics.
+    pub messages: Vec<SubMsg<T>>,
+    /// The attributes that will be emitted as part of a "wasm" event.
+    ///
+    /// More info about events (and their attributes) can be found in [*Cosmos SDK* docs].
+    ///
+    /// [*Cosmos SDK* docs]: https://docs.cosmos.network/master/core/events.html
+    pub attributes: Vec<Attribute>,
+    /// Extra, custom events separate from the main `wasm` one. These will have
+    /// `wasm-` prepended to the type.
+    ///
+    /// More info about events can be found in [*Cosmos SDK* docs].
+    ///
+    /// [*Cosmos SDK* docs]: https://docs.cosmos.network/master/core/events.html
+    pub events: Vec<Event>,
+    /// The binary payload to include in the response.
+    pub data: Option<Binary>,
+}
+
+/// Use this to define when the contract gets a response callback.
+/// If you only need it for errors or success you can select just those in order
+/// to save gas.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplyOn {
+    /// Always perform a callback after SubMsg is processed
+    Always,
+    /// Only callback if SubMsg returned an error, no callback on success case
+    Error,
+    /// Only callback if SubMsg was successful, no callback on error case
+    Success,
+    /// Never make a callback - this is like the original CosmosMsg semantics
+    Never,
+}
+
+/// A submessage that will guarantee a `reply` call on success or error, depending on
+/// the `reply_on` setting. If you do not need to process the result, use regular messages instead.
+///
+/// Note: On error the submessage execution will revert any partial state changes due to this message,
+/// but not revert any state changes in the calling contract. If this is required, it must be done
+/// manually in the `reply` entry point.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SubMsg<T = Empty> {
+    /// An arbitrary ID chosen by the contract.
+    /// This is typically used to match `Reply`s in the `reply` entry point to the submessage.
+    pub id: u64,
+    pub msg: CosmosMsg<T>,
+    pub gas_limit: Option<u64>,
+    pub reply_on: ReplyOn,
+}
+
+impl<T> SubMsg<T> {
+    /// new creates a "fire and forget" message with the pre-0.14 semantics
+    pub fn new(msg: impl Into<CosmosMsg<T>>) -> Self {
+        SubMsg {
+            id: UNUSED_MSG_ID,
+            msg: msg.into(),
+            reply_on: ReplyOn::Never,
+            gas_limit: None,
+        }
+    }
+
+    /// create a `SubMsg` that will provide a `reply` with the given id if the message returns `Ok`
+    pub fn reply_on_success(msg: impl Into<CosmosMsg<T>>, id: u64) -> Self {
+        Self::reply_on(msg.into(), id, ReplyOn::Success)
+    }
+
+    /// create a `SubMsg` that will provide a `reply` with the given id if the message returns `Err`
+    pub fn reply_on_error(msg: impl Into<CosmosMsg<T>>, id: u64) -> Self {
+        Self::reply_on(msg.into(), id, ReplyOn::Error)
+    }
+
+    /// create a `SubMsg` that will always provide a `reply` with the given id
+    pub fn reply_always(msg: impl Into<CosmosMsg<T>>, id: u64) -> Self {
+        Self::reply_on(msg.into(), id, ReplyOn::Always)
+    }
+
+    /// Add a gas limit to the message.
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// # use cosmwasm_std::{coins, BankMsg, ReplyOn, SubMsg};
+    /// # let msg = BankMsg::Send { to_address: String::from("you"), amount: coins(1015, "earth") };
+    /// let sub_msg: SubMsg = SubMsg::reply_always(msg, 1234).with_gas_limit(60_000);
+    /// assert_eq!(sub_msg.id, 1234);
+    /// assert_eq!(sub_msg.gas_limit, Some(60_000));
+    /// assert_eq!(sub_msg.reply_on, ReplyOn::Always);
+    /// ```
+    pub fn with_gas_limit(mut self, limit: u64) -> Self {
+        self.gas_limit = Some(limit);
+        self
+    }
+
+    fn reply_on(msg: CosmosMsg<T>, id: u64, reply_on: ReplyOn) -> Self {
+        SubMsg {
+            id,
+            msg,
+            reply_on,
+            gas_limit: None,
+        }
+    }
+}
+
+/// The result object returned to `reply`. We always get the ID from the submessage
+/// back and then must handle success and error cases ourselves.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Reply {
+    /// The ID that the contract set when emitting the `SubMsg`.
+    /// Use this to identify which submessage triggered the `reply`.
+    pub id: u64,
+    pub result: SubMsgResult,
+}
+
+/// This is the result type that is returned from a sub message execution.
+///
+/// We use a custom type here instead of Rust's Result because we want to be able to
+/// define the serialization, which is a public interface. Every language that compiles
+/// to Wasm and runs in the ComsWasm VM needs to create the same JSON representation.
+///
+/// Until version 1.0.0-beta5, `ContractResult<SubMsgResponse>` was used instead
+/// of this type. Once serialized, the two types are the same. However, in the Rust type
+/// system we want different types for clarity and documenation reasons.
+///
+/// # Examples
+///
+/// Success:
+///
+/// ```
+/// # use cosmwasm_std::{to_vec, Binary, Event, SubMsgResponse, SubMsgResult};
+/// let response = SubMsgResponse {
+///     data: Some(Binary::from_base64("MTIzCg==").unwrap()),
+///     events: vec![Event::new("wasm").add_attribute("fo", "ba")],
+/// };
+/// let result: SubMsgResult = SubMsgResult::Ok(response);
+/// assert_eq!(to_vec(&result).unwrap(), br#"{"ok":{"events":[{"type":"wasm","attributes":[{"key":"fo","value":"ba"}]}],"data":"MTIzCg=="}}"#);
+/// ```
+///
+/// Failure:
+///
+/// ```
+/// # use cosmwasm_std::{to_vec, SubMsgResult, Response};
+/// let error_msg = String::from("Something went wrong");
+/// let result = SubMsgResult::Err(error_msg);
+/// assert_eq!(to_vec(&result).unwrap(), br#"{"error":"Something went wrong"}"#);
+/// ```
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubMsgResult {
+    Ok(SubMsgResponse),
+    /// An error type that every custom error created by contract developers can be converted to.
+    /// This could potientially have more structure, but String is the easiest.
+    #[serde(rename = "error")]
+    Err(String),
+}
+
+// Implementations here mimic the Result API and should be implemented via a conversion to Result
+// to ensure API consistency
+impl SubMsgResult {
+    /// Converts a `SubMsgResult<S>` to a `Result<S, String>` as a convenient way
+    /// to access the full Result API.
+    pub fn into_result(self) -> Result<SubMsgResponse, String> {
+        Result::<SubMsgResponse, String>::from(self)
+    }
+
+    pub fn unwrap(self) -> SubMsgResponse {
+        self.into_result().unwrap()
+    }
+
+    pub fn unwrap_err(self) -> String {
+        self.into_result().unwrap_err()
+    }
+
+    pub fn is_ok(&self) -> bool {
+        matches!(self, SubMsgResult::Ok(_))
+    }
+
+    pub fn is_err(&self) -> bool {
+        matches!(self, SubMsgResult::Err(_))
+    }
+}
+
+impl From<SubMsgResult> for Result<SubMsgResponse, String> {
+    fn from(original: SubMsgResult) -> Result<SubMsgResponse, String> {
+        match original {
+            SubMsgResult::Ok(value) => Ok(value),
+            SubMsgResult::Err(err) => Err(err),
+        }
+    }
+}
+
+/// The information we get back from a successful sub message execution,
+/// with full Cosmos SDK events.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SubMsgResponse {
+    pub events: Vec<Event>,
+    pub data: Option<Binary>,
+}
+
+/// Like CustomQuery for better type clarity.
+/// Also makes it shorter to use as a trait bound.
+pub trait CustomMsg: Serialize + Clone + core::fmt::Debug + PartialEq {}
+
+impl CustomMsg for Empty {}
+
+#[non_exhaustive]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+// See https://github.com/serde-rs/serde/issues/1296 why we cannot add De-Serialize trait bounds to T
+pub enum CosmosMsg<T = Empty> {
+    Bank(BankMsg),
+    // by default we use RawMsg, but a contract can override that
+    // to call into more app-specific code (whatever they define)
+    Custom(T),
+    Wasm(WasmMsg),
+}
+
+/// The message types of the bank module.
+///
+/// See https://github.com/cosmos/cosmos-sdk/blob/v0.40.0/proto/cosmos/bank/v1beta1/tx.proto
+#[non_exhaustive]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum BankMsg {
+    /// Sends native tokens from the contract to the given address.
+    ///
+    /// This is translated to a [MsgSend](https://github.com/cosmos/cosmos-sdk/blob/v0.40.0/proto/cosmos/bank/v1beta1/tx.proto#L19-L28).
+    /// `from_address` is automatically filled with the current contract's address.
+    Send {
+        to_address: String,
+        amount: Vec<Coin>,
+    },
+    /// This will burn the given coins from the contract's account.
+    /// There is no Cosmos SDK message that performs this, but it can be done by calling the bank keeper.
+    /// Important if a contract controls significant token supply that must be retired.
+    Burn { amount: Vec<Coin> },
+}
+
+/// The message types of the wasm module.
+///
+/// See https://github.com/CosmWasm/wasmd/blob/v0.14.0/x/wasm/internal/types/tx.proto
+#[non_exhaustive]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WasmMsg {
+    /// Dispatches a call to another contract at a known address (with known ABI).
+    ///
+    /// This is translated to a [MsgExecuteContract](https://github.com/CosmWasm/wasmd/blob/v0.14.0/x/wasm/internal/types/tx.proto#L68-L78).
+    /// `sender` is automatically filled with the current contract's address.
+    Execute {
+        contract_addr: String,
+        /// msg is the json-encoded ExecuteMsg struct (as raw Binary)
+        msg: Binary,
+        funds: Vec<Coin>,
+    },
+    /// Instantiates a new contracts from previously uploaded Wasm code.
+    ///
+    /// This is translated to a [MsgInstantiateContract](https://github.com/CosmWasm/wasmd/blob/v0.16.0-alpha1/x/wasm/internal/types/tx.proto#L47-L61).
+    /// `sender` is automatically filled with the current contract's address.
+    Instantiate {
+        admin: Option<String>,
+        code_id: u64,
+        /// msg is the JSON-encoded InstantiateMsg struct (as raw Binary)
+        msg: Binary,
+        funds: Vec<Coin>,
+        /// A human-readbale label for the contract
+        label: String,
+    },
+    /// Migrates a given contracts to use new wasm code. Passes a MigrateMsg to allow us to
+    /// customize behavior.
+    ///
+    /// Only the contract admin (as defined in wasmd), if any, is able to make this call.
+    ///
+    /// This is translated to a [MsgMigrateContract](https://github.com/CosmWasm/wasmd/blob/v0.14.0/x/wasm/internal/types/tx.proto#L86-L96).
+    /// `sender` is automatically filled with the current contract's address.
+    Migrate {
+        contract_addr: String,
+        /// the code_id of the new logic to place in the given contract
+        new_code_id: u64,
+        /// msg is the json-encoded MigrateMsg struct that will be passed to the new code
+        msg: Binary,
+    },
+    /// Sets a new admin (for migrate) on the given contract.
+    /// Fails if this contract is not currently admin of the target contract.
+    UpdateAdmin {
+        contract_addr: String,
+        admin: String,
+    },
+    /// Clears the admin on the given contract, so no more migration possible.
+    /// Fails if this contract is not currently admin of the target contract.
+    ClearAdmin { contract_addr: String },
+}
+
+/// A full [*Cosmos SDK* event].
+///
+/// This version uses string attributes (similar to [*Cosmos SDK* StringEvent]),
+/// which then get magically converted to bytes for Tendermint somewhere between
+/// the Rust-Go interface, JSON deserialization and the `NewEvent` call in Cosmos SDK.
+///
+/// [*Cosmos SDK* event]: https://docs.cosmos.network/master/core/events.html
+/// [*Cosmos SDK* StringEvent]: https://github.com/cosmos/cosmos-sdk/blob/v0.42.5/proto/cosmos/base/abci/v1beta1/abci.proto#L56-L70
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Event {
+    /// The event type. This is renamed to "ty" because "type" is reserved in Rust. This sucks, we know.
+    #[serde(rename = "type")]
+    pub ty: String,
+    /// The attributes to be included in the event.
+    ///
+    /// You can learn more about these from [*Cosmos SDK* docs].
+    ///
+    /// [*Cosmos SDK* docs]: https://docs.cosmos.network/master/core/events.html
+    pub attributes: Vec<Attribute>,
+}
+
+/// An key value pair that is used in the context of event attributes in logs
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct Attribute {
+    pub key: String,
+    pub value: String,
+}
+
+impl<K: AsRef<str>, V: AsRef<str>> PartialEq<(K, V)> for Attribute {
+    fn eq(&self, (k, v): &(K, V)) -> bool {
+        (self.key.as_str(), self.value.as_str()) == (k.as_ref(), v.as_ref())
+    }
+}
+
+impl<K: AsRef<str>, V: AsRef<str>> PartialEq<Attribute> for (K, V) {
+    fn eq(&self, attr: &Attribute) -> bool {
+        attr == self
+    }
+}
+
+impl<K: AsRef<str>, V: AsRef<str>> PartialEq<(K, V)> for &Attribute {
+    fn eq(&self, (k, v): &(K, V)) -> bool {
+        (self.key.as_str(), self.value.as_str()) == (k.as_ref(), v.as_ref())
+    }
+}
+
+impl<K: AsRef<str>, V: AsRef<str>> PartialEq<&Attribute> for (K, V) {
+    fn eq(&self, attr: &&Attribute) -> bool {
+        attr == self
+    }
+}
+
+impl PartialEq<Attribute> for &Attribute {
+    fn eq(&self, rhs: &Attribute) -> bool {
+        *self == rhs
+    }
+}
+
+impl PartialEq<&Attribute> for Attribute {
+    fn eq(&self, rhs: &&Attribute) -> bool {
+        self == *rhs
+    }
+}
+
+/// An empty struct that serves as a placeholder in different places,
+/// such as contracts that don't set a custom message.
+///
+/// It is designed to be expressable in correct JSON and JSON Schema but
+/// contains no meaningful data. Previously we used enums without cases,
+/// but those cannot represented as valid JSON Schema (https://github.com/CosmWasm/cosmwasm/issues/451)
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Empty {}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContractResult<S> {
+    Ok(S),
+    /// An error type that every custom error created by contract developers can be converted to.
+    /// This could potientially have more structure, but String is the easiest.
+    #[serde(rename = "error")]
+    Err(String),
+}
+
+// Implementations here mimic the Result API and should be implemented via a conversion to Result
+// to ensure API consistency
+impl<S> ContractResult<S> {
+    /// Converts a `ContractResult<S>` to a `Result<S, String>` as a convenient way
+    /// to access the full Result API.
+    pub fn into_result(self) -> Result<S, String> {
+        Result::<S, String>::from(self)
+    }
+
+    pub fn unwrap(self) -> S {
+        self.into_result().unwrap()
+    }
+
+    pub fn is_ok(&self) -> bool {
+        matches!(self, ContractResult::Ok(_))
+    }
+
+    pub fn is_err(&self) -> bool {
+        matches!(self, ContractResult::Err(_))
+    }
+}
+
+impl<S: core::fmt::Debug> ContractResult<S> {
+    pub fn unwrap_err(self) -> String {
+        self.into_result().unwrap_err()
+    }
+}
+
+impl<S> From<ContractResult<S>> for Result<S, String> {
+    fn from(original: ContractResult<S>) -> Result<S, String> {
+        match original {
+            ContractResult::Ok(value) => Ok(value),
+            ContractResult::Err(err) => Err(err),
+        }
+    }
+}
+
+
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 pub struct Coin {
     pub denom: String,
