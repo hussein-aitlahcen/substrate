@@ -146,7 +146,10 @@ impl<'a, T> Externals for GuestExternals<'a, T> {
 				ReturnValue::Value(v) => Some(to_wasmi(v)),
 				ReturnValue::Unit => None,
 			}),
-			Err(HostError) => Err(TrapKind::Host(Box::new(DummyHostError)).into()),
+			Err(HostError) => {
+				log::debug!(target: "runtime::contracts", "Couldn't find host function {}", index);
+				Err(TrapKind::Host(Box::new(DummyHostError)).into())
+			},
 		}
 	}
 }

@@ -24,6 +24,7 @@ mod code_cache;
 mod memory;
 mod prepare;
 mod runtime;
+mod cosmwasm;
 
 #[cfg(feature = "runtime-benchmarks")]
 pub use crate::wasm::code_cache::reinstrument;
@@ -31,14 +32,12 @@ pub use crate::wasm::runtime::{CallFlags, ReturnCode, Runtime, RuntimeCosts};
 use crate::{
 	exec::{ExecError, ExecResult, Executable, ExportedFunction, Ext},
 	gas::GasMeter,
-	wasm::{env_def::FunctionImplProvider, memory::write_region},
+	wasm::{env_def::FunctionImplProvider, memory::write_region, cosmwasm::*},
 	AccountIdOf, BalanceOf, CodeHash, CodeStorage, Config, Schedule,
 };
 use codec::{Decode, Encode, MaxEncodedLen};
-use cosmwasm_std::*;
 use frame_support::{
 	dispatch::{DispatchError, DispatchResult},
-	traits::TryCollect,
 };
 use sp_core::crypto::UncheckedFrom;
 use sp_sandbox::{
@@ -206,6 +205,13 @@ impl<T: Config> OwnerInfo<T> {
 	}
 }
 
+pub fn to_vec<T>(data: &T) -> Result<Vec<u8>, DispatchError>
+where
+	T: serde::ser::Serialize + ?Sized,
+{
+	serde_json::to_vec(data).map_err(|_| DispatchError::Other("couldn't serialize"))
+}
+
 impl<T: Config> Executable<T> for PrefabWasmModule<T>
 where
 	T::AccountId: UncheckedFrom<T::Hash> + AsRef<[u8]>,
@@ -286,7 +292,7 @@ where
 							match instance.invoke("allocate", &[Value::I32(x as i32)], &mut runtime)
 							{
 								Ok(ReturnValue::Value(Value::I32(v))) => Ok(v as u32),
-								_ => Err(DispatchError::Other("")),
+								_ => Err(DispatchError::Other("allocate failed")),
 							}
 						};
 						// let mut deallocate = |ptr: u32| {
@@ -299,25 +305,30 @@ where
 						let env = Env {
 							block: BlockInfo {
 								height: 0,
-								time: Timestamp::from_seconds(0),
-								chain_id: "picasso".to_string(),
+								time: 0,
+								chain_id: Default::default(),
 							},
 							transaction: Some(TransactionInfo { index: 0 }),
 							contract: ContractInfo { address: Addr::unchecked("321") },
 						};
 						let info = MessageInfo { sender: Addr::unchecked("123"), funds: vec![] };
+						log::debug!(target: "runtime::contracts", "Marshalling");
 						let args = vec![
-							to_vec(&env).map_err(|_| DispatchError::Other(""))?,
-							to_vec(&info).map_err(|_| DispatchError::Other(""))?,
+							to_vec(&env).map_err(|_| DispatchError::Other("marshall failed"))?,
+							to_vec(&info).map_err(|_| DispatchError::Other("marshall failed"))?,
 							vec![],
 						];
 						let mut arg_region_ptrs = Vec::<Value>::with_capacity(args.len());
 						for (arg, region_ptr) in args.iter()
-							.map(|arg| Result::<_, DispatchError>::Ok((arg, allocate(arg.len())?)))
+							.map(|arg| {
+								log::debug!(target: "runtime::contracts", "Allocate");
+								Result::<_, DispatchError>::Ok((arg, allocate(arg.len())?))
+							})
 							.collect::<Result<Vec<_>, _>>()? {
 							write_region(&runtime.memory, region_ptr, &arg)?;
 							arg_region_ptrs.push(Value::I32(region_ptr as i32));
 						}
+						log::debug!(target: "runtime::contracts", "Instantiate");
 						instance.invoke(function_name, &arg_region_ptrs, &mut runtime)
 					},
 				}

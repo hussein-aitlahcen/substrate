@@ -1,6 +1,8 @@
 use sp_runtime::DispatchError;
 use sp_sandbox::default_executor::Memory;
 use sp_sandbox::SandboxMemory;
+use sp_std::vec::Vec;
+use sp_std::vec;
 
 type MemoryResult<T> = Result<T, DispatchError>;
 
